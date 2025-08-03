@@ -151,6 +151,20 @@ cat target.txt | ./Brainmk bloom -n 1024 -o target.blf
 creating bloom filter: n = 1,024 | p = 1:1,000,000,000 | m = 44,167 (0.0 MB)
 added 10 items; saving to target.blf
 ```
+
+
+# windows platform
+```
+type target.txt | Brainmk\Brainmk.exe bloom -n 1024 -o target.blf
+
+type target.txt | ./Brainmk brain -f target.txt -b target.blf -a cu -t 1
+
+type target.txt | ./Brainmk brain -f target.txt -b target.blf -a cu -t 1
+
+wandian.exe | Brainmk.exe brain -f target.txt -b target.blf -a cu -t 1 -sha
+```
+Note that password generators with lengths greater than 13 characters require -R, as the increment exceeds the limit of the count.
+
 # Disclaimer
 
 This project aims to learn elliptic curve mathematics in cryptocurrency. 
