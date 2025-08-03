@@ -2,17 +2,18 @@
 
 Note that this is a forked modification and reimplementation https://github.com/vladkens/ecloop
 
-A high-performance, CPU-optimized tool with the ability to search compressed and uncompressed addresses, as well as customizable puzzle-based searches for private keys and brainwallet searches.
+A high-performance, CPU-optimized tool with the ability to search compressed and uncompressed addresses, 
+as well as customizable puzzle-based searches for private keys and brainwallet searches.
 
 
 #Features
-🍏 Fixed 256-bit modulo operations, fixed a private key partitioning issue, fixed the secp256k1 core, improved speed, and used AVX2 sha256 and ripemd160 for high-speed computation.
-🔄 Group inversion of point addition
-🍇 Precomputed tables for integral multiplication
-🔍 Search for compressed and uncompressed public keys (hash160)
-🌟 Optimized sha256 and ripemd160 using SIMD and AVX2 (using SHA extensions for ARM and Intel)
-🍎 Runs seamlessly on macOS and Linux
-🔧 Customizable search range and number of threads for flexible usage
+1. 🍏 Fixed 256-bit modulo operations, fixed a private key partitioning issue, fixed the secp256k1 core, improved speed, and used AVX2 sha256 and ripemd160 2. for high-speed computation.
+3. 🔄 Group inversion of point addition
+4. 🍇 Precomputed tables for integral multiplication
+5. 🔍 Search for compressed and uncompressed public keys (hash160)
+6. 🌟 Optimized sha256 and ripemd160 using SIMD and AVX2 (using SHA extensions for ARM and Intel)
+7. 🍎 Runs seamlessly on macOS and Linux
+8. 🔧 Customizable search range and number of threads for flexible usage
 
 
 Build
@@ -44,34 +45,41 @@ Compute options:
   -r <range>      - (for puzzle mode) search range in hex format (example: 8000:ffff)
   -q              - quiet mode (no stdout; must use -o)
   -sha            - (For brainwallet mode) Treats the standard input line as a raw text password and encrypts the computed private key using SHA256.
-```
+
 
 
 Other commands:
 
   bloom         - create bloom filter from list of hex-encoded hash160
-
+```
 # Instructions: Brainmk <command> [-t <number of threads>] [-f <file path>] [-a <addr type>] [-r <range>]
 
 Calculation command:
 puzzle: Performs an efficient search within a given range, suitable for puzzle games.
 brain: Searches from standard input. Defaults to a hexadecimal private key; brainwallet attacks require the -sha flag.
 Calculation options:
--f <file>: Hash list file for second confirmation.
--b <file>: Bloom filter file.
--o <file>: Specifies the output file to save the found key (defaults to standard output).
--t <threads>: Sets the number of threads to run (default: 1).
--a <addr_type>: Sets the address type to search: c - addr33, u - addr65 (default: c).
--r <range>: Specifies the search range, in hexadecimal format (e.g., 8000:ffff, defaults to searching all).
--q: Silent mode (no output to standard output; you must specify an output file with -o).
--sha: (For brainwallet mode) Treats the standard input line as a raw text password and encrypts the computed private key using SHA256.
+1. -f <file>: Hash list file for second confirmation.
+2. -b <file>: Bloom filter file.
+3. -o <file>: Specifies the output file to save the found key (defaults to standard output).
+4. -t <threads>: Sets the number of threads to run (default: 1).
+5. -a <addr_type>: Sets the address type to search: c - addr33, u - addr65 (default: c).
+6. -r <range>: Specifies the search range, in hexadecimal format (e.g., 8000:ffff, defaults to searching all).
+7. -q: Silent mode (no output to standard output; you must specify an output file with -o).
+8. -sha: (For brainwallet mode) Treats the standard input line as a raw text password and encrypts the computed private key using SHA256.
 
 Other commands:
 
 bloom: Creates a Bloom filter from a list of hexadecimal-encoded hash160 values.
 
 #Example 1: Check for keys in a given range (append sequentially)
--f is the filter file with hash160 to search. This can be a list of hex-encoded hashes (one per line) or a bloom filter (must have a .blf extension). -t uses 4 threads. –r is the start:end of the search range. -o is the file where the found keys should be saved (if not provided, stdout is padded). No -a option is provided, so c will check the (compressed) hash160.   Test platform: Linux/Debian, Intel® Xeon® processor E5-2697 v4  45MB cache, 2.30 GHz single-threaded
+
+1. -f is the filter file with hash160 to search. This can be a list of hex-encoded hashes (one per line) or a bloom filter (must have a .blf extension). 
+2. -t uses 4 threads. 
+3. –r is the start:end of the search range. 
+4. -o is the file where the found keys should be saved (if not provided, stdout is padded). 
+No 
+5. -a option is provided, so c will check the (compressed) hash160. 
+6. Test platform: Linux/Debian, Intel® Xeon® processor E5-2697 v4  45MB cache, 2.30 GHz single-threaded
 ```
 ./Brainmk puzzle -b target.blf -t 1 -r 1:ffffff
 
@@ -86,12 +94,16 @@ addr33: d27d7223ee3fcc3f8826773fae0e49f20c0b0cc5 <- 0000000000000000000000000000
 ```
 
 #Example 2: Check a given list of private keys (multiplication)
-cat privkeys.txt – The source of HEX-encoded private keys to search for (can be a file or a generator program). -b Use hash160 as a bloom filter to search for. -a Which type of hash160 to search for (c – compressed, u – uncompressed, cu checks for both). -t Use 1 thread.
+
+cat privkeys.txt – The source of HEX-encoded private keys to search for (can be a file or a generator program).
+-b Use hash160 as a bloom filter to search for. 
+-a Which type of hash160 to search for (c – compressed, u – uncompressed, cu checks for both). 
+-t Use 1 thread.
 ```
 cat privkeys.txt | ./Brainmk brain -b target.blf -t 1 -a uc
-
+```
 Alternatively, send him the hexadecimal private key generated by the script for processing.
-
+```
 ./wandian | ./Brainmk brain -f target.txt -b target.blf -a cu -t 1
 command: brain | threads: 1 | addr33: 1 | addr65: 1
 filter: bloom + list (10)
@@ -106,9 +118,9 @@ addr65: 91b24bf9f5288532960ac687abb035127b1d28a5 <- 0000000000000000000000000000
 #Example 3: Check the encrypted password, this is wallet mode -sha
 ```
 cat privkeys.txt | ./Brainmk brain -b target.blf  -a cu -t 1 -sha
-
+```
 Or, send the password generated by the program script to him for processing.
-
+```
 ./wandian | ./Brainmk brain -f target.txt -b target.blf -a cu -t 1 -sha
 
 command: brain | threads: 1 | addr33: 1 | addr65: 0
@@ -120,14 +132,14 @@ addr33: 47620c131621b9bbe5aa277b74cc1ea0fcd27ccb <- fa3b4635d18025c0cfec4902cd75
 
 ```
 #Example 4: Generate a Bloom Filter
-cat reads a list of hexadecimal-encoded hash160 values from a file. -n specifies the number of entries (hash value count) in the Bloom filter. -o defines where in the output the filter is written (.blf requires an extension).
 
-The best practice for the -n parameter is to estimate the total number of entries to be stored as accurately as possible and set that as the value of -n. The bloomer will automatically generate an optimal bloom file.
-
-
-The Bloom filter uses p = 0.000001 (1 in 1,000,000 false positives). You can adjust this option by using n. See the Bloom filter calculator. A list of all addresses can be found here.
-
-
+1. cat reads a list of hexadecimal-encoded hash160 values from a file. 
+2. -n specifies the number of entries (hash value count) in the Bloom filter. 
+3. -o defines where in the output the filter is written (.blf requires an extension).
+4. The best practice for the -n parameter is to estimate the total number of entries to be stored as accurately as possible and set that as the value of -n.
+5. The bloomer will automatically generate an optimal bloom file.
+6. The Bloom filter uses p = 0.000001 (1 in 1,000,000 false positives). You can adjust this option by using n. 
+7. See the Bloom filter calculator. A list of all addresses can be found here.
 
 ```
 cat target.txt | ./Brainmk bloom -n 1024 -o target.blf
@@ -137,7 +149,8 @@ added 10 items; saving to target.blf
 ```
 #Disclaimer
 
-This project aims to learn elliptic curve mathematics in cryptocurrency. A function for searching Bitcoin puzzles and a brainwallet test have been added as practical use cases.
+This project aims to learn elliptic curve mathematics in cryptocurrency. 
+A function for searching Bitcoin puzzles and a brainwallet test have been added as practical use cases.
 
 Thanks
 ```
@@ -149,19 +162,23 @@ albertobsd/keyhunt
 JeanLucPons/VanitySearch
 
 
-### Sponsorship
+#Sponsorship
 If this project has been helpful to you, please consider sponsoring. Your support is greatly appreciated. Thank you!
-```sh
--BTC: bc1qt3nh2e6gjsfkfacnkglt5uqghzvlrr6jahyj2k
--
--ETH: 0xD6503e5994bF46052338a9286Bc43bC1c3811Fa1
--
--DOGE: DTszb9cPALbG9ESNJMFJt4ECqWGRCgucky
--
--TRX: TAHUmjyzg7B3Nndv264zWYUhQ9HUmX4Xu4
--
+
 ```
-### ⚠️ Reminder: Do not input real private keys on connected devices!
--
--This tool is provided for learning and research purposes only. Please use it with an understanding of the relevant risks. The developers are not responsible for financial losses or legal liability -caused by the use of this tool.
--
+-BTC: bc1qt3nh2e6gjsfkfacnkglt5uqghzvlrr6jahyj2k
+
+ETH: 0xD6503e5994bF46052338a9286Bc43bC1c3811Fa1
+
+DOGE: DTszb9cPALbG9ESNJMFJt4ECqWGRCgucky
+
+TRX: TAHUmjyzg7B3Nndv264zWYUhQ9HUmX4Xu4
+
+```
+#⚠️ Reminder: Do not input real private keys on connected devices!
+
+
+This tool is provided for learning and research purposes only.
+Please use it with an understanding of the relevant risks.
+The developers are not responsible for financial losses or legal liability -caused by the use of this tool.
+
