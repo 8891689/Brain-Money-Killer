@@ -1,4 +1,4 @@
-#Brain Money Killer
+# Brain Money Killer
 
 Note that this is a forked modification and reimplementation https://github.com/vladkens/ecloop
 
@@ -6,7 +6,7 @@ A high-performance, CPU-optimized tool with the ability to search compressed and
 as well as customizable puzzle-based searches for private keys and brainwallet searches.
 
 
-#Features
+# Features
 1. 🍏 Fixed 256-bit modulo operations, fixed a private key partitioning issue, fixed the secp256k1 core, improved speed, and used AVX2 sha256 and ripemd160 2. for high-speed computation.
 3. 🔄 Group inversion of point addition
 4. 🍇 Precomputed tables for integral multiplication
@@ -26,7 +26,7 @@ make clean
 ```
 Note: This has been tested with clang but has not been thoroughly tested.
 
-#usage
+# usage
 ```
 ./Brainmk -h
 Usage: ./Brainmk <cmd> [-t <threads>] [-b <bloom_file>] [-f <hash_list>] [-a <addr_type>] [-r <range>] [-sha]
@@ -71,7 +71,7 @@ Other commands:
 
 bloom: Creates a Bloom filter from a list of hexadecimal-encoded hash160 values.
 
-#Example 1: Check for keys in a given range (append sequentially)
+# Example 1: Check for keys in a given range (append sequentially)
 
 1. -f is the filter file with hash160 to search. This can be a list of hex-encoded hashes (one per line) or a bloom filter (must have a .blf extension). 
 2. -t uses 4 threads. 
@@ -93,7 +93,7 @@ addr33: d27d7223ee3fcc3f8826773fae0e49f20c0b0cc5 <- 0000000000000000000000000000
 9.28s ~ 1.81M it/s ~ 2 / 16,777,214
 ```
 
-#Example 2: Check a given list of private keys (multiplication)
+# Example 2: Check a given list of private keys (multiplication)
 
 cat privkeys.txt – The source of HEX-encoded private keys to search for (can be a file or a generator program).
 -b Use hash160 as a bloom filter to search for. 
@@ -115,7 +115,7 @@ addr65: 91b24bf9f5288532960ac687abb035127b1d28a5 <- 0000000000000000000000000000
 18.76s ~ 0.82M it/s ~ 0 / 15,472,640^C
 ```
 
-#Example 3: Check the encrypted password, this is wallet mode -sha
+# Example 3: Check the encrypted password, this is wallet mode -sha
 ```
 cat privkeys.txt | ./Brainmk brain -b target.blf  -a cu -t 1 -sha
 ```
@@ -131,7 +131,7 @@ addr33: 47620c131621b9bbe5aa277b74cc1ea0fcd27ccb <- fa3b4635d18025c0cfec4902cd75
 21.54s ~ 0.14M it/s ~ 1 / 2,944,000^C
 
 ```
-#Example 4: Generate a Bloom Filter
+# Example 4: Generate a Bloom Filter
 
 1. cat reads a list of hexadecimal-encoded hash160 values from a file. 
 2. -n specifies the number of entries (hash value count) in the Bloom filter. 
@@ -147,7 +147,7 @@ cat target.txt | ./Brainmk bloom -n 1024 -o target.blf
 creating bloom filter: n = 1,024 | p = 1:1,000,000,000 | m = 44,167 (0.0 MB)
 added 10 items; saving to target.blf
 ```
-#Disclaimer
+# Disclaimer
 
 This project aims to learn elliptic curve mathematics in cryptocurrency. 
 A function for searching Bitcoin puzzles and a brainwallet test have been added as practical use cases.
@@ -162,7 +162,7 @@ albertobsd/keyhunt
 JeanLucPons/VanitySearch
 
 
-#Sponsorship
+# Sponsorship
 If this project has been helpful to you, please consider sponsoring. Your support is greatly appreciated. Thank you!
 
 ```
@@ -175,7 +175,7 @@ DOGE: DTszb9cPALbG9ESNJMFJt4ECqWGRCgucky
 TRX: TAHUmjyzg7B3Nndv264zWYUhQ9HUmX4Xu4
 
 ```
-#⚠️ Reminder: Do not input real private keys on connected devices!
+# ⚠️ Reminder: Do not input real private keys on connected devices!
 
 
 This tool is provided for learning and research purposes only.
