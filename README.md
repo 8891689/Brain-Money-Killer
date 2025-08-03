@@ -161,9 +161,10 @@ Thanks
 sharpening, gemini
 ```
 For in-depth research, please go to .
-ryancdotorg/brainflayer
-albertobsd/keyhunt
-JeanLucPons/VanitySearch
+
+1. ryancdotorg/brainflayer
+2. albertobsd/keyhunt
+3. JeanLucPons/VanitySearch
 
 
 # Sponsorship
