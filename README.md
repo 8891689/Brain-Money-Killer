@@ -157,13 +157,36 @@ added 10 items; saving to target.blf
 ```
 type target.txt | Brainmk.exe bloom -n 1024 -o target.blf
 
-type target.txt | Brainmk.exe brain -f target.txt -b target.blf -a cu -t 1
 
-wandian.exe | Brainmk.exe brain -f target.txt -b target.blf -a cu -t 1
+Brainmk.exe puzzle -b target.blf -t 1 -r 1:ffffff
+
+type target.txt | Brainmk.exe brain -f target.txt -b target.blf -a cu -t 1
 
 wandian.exe | Brainmk.exe brain -f target.txt -b target.blf -a cu -t 1 -sha
 ```
-Note that password generators with lengths greater than 13 characters require -R, as the increment exceeds the limit of the count.
+```
+wandian.exe -h
+
+Usage: wandian [-n num] [-t threads] [-l length] [-c charset] [-R] [-o output file]
+-n num: Number of passwords to generate (valid only with -o)
+-t threads: Number of threads to use (default: 4)
+-l length: Password length range (e.g., 3-4)
+-c charset: Character set to use (e.g., d, u, i, h, j, k, s, all)
+Multiple sets can be separated by commas, e.g., -c d,u,i
+-R: Generates a random password (infinite generation)
+-o outputFile: Output file name (valid only with -n)
+
+d | 0123456789 [0-9]
+u | abcdefghijklmnopqrstuvwxyz [a-z]
+i | ABCDEFGHIJKLMNOPQRSTUVWXYZ [A-Z]
+h | abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 [0-9a-zA-Z]
+j | 0123456789ABCDEF [0-9A-F]
+k | abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ [a-zA-Z]
+s | !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
+all | abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{}|;:'\",.<>?/`~"
+
+```
+Note that the generator will produce passwords longer than 13 characters, requiring -R, as the increment would exceed the count limit.
 
 # Disclaimer
 
