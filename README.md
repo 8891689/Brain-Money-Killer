@@ -55,9 +55,13 @@ Other commands:
 # Instructions: Brainmk <command> [-t <number of threads>] [-f <file path>] [-a <addr type>] [-r <range>]
 
 Calculation command:
-puzzle: Performs an efficient search within a given range, suitable for puzzle games.
-brain: Searches from standard input. Defaults to a hexadecimal private key; brainwallet attacks require the -sha flag.
+
+1. puzzle: Performs an efficient search within a given range, suitable for puzzle games.
+
+2. brain: Searches from standard input. Defaults to a hexadecimal private key; brainwallet attacks require the -sha flag.
+
 Calculation options:
+
 1. -f <file>: Hash list file for second confirmation.
 2. -b <file>: Bloom filter file.
 3. -o <file>: Specifies the output file to save the found key (defaults to standard output).
@@ -69,7 +73,7 @@ Calculation options:
 
 Other commands:
 
-bloom: Creates a Bloom filter from a list of hexadecimal-encoded hash160 values.
+1. bloom: Creates a Bloom filter from a list of hexadecimal-encoded hash160 values.
 
 # Example 1: Check for keys in a given range (append sequentially)
 
