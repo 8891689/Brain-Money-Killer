@@ -155,11 +155,11 @@ added 10 items; saving to target.blf
 
 # windows platform
 ```
-type target.txt | Brainmk\Brainmk.exe bloom -n 1024 -o target.blf
+type target.txt | Brainmk.exe bloom -n 1024 -o target.blf
 
-type target.txt | ./Brainmk brain -f target.txt -b target.blf -a cu -t 1
+type target.txt | Brainmk.exe brain -f target.txt -b target.blf -a cu -t 1
 
-type target.txt | ./Brainmk brain -f target.txt -b target.blf -a cu -t 1
+wandian.exe | Brainmk.exe brain -f target.txt -b target.blf -a cu -t 1
 
 wandian.exe | Brainmk.exe brain -f target.txt -b target.blf -a cu -t 1 -sha
 ```
