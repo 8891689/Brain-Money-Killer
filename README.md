@@ -86,7 +86,7 @@ Calculation options:
 
 Other commands:
 
-10. bloom: Creates a Bloom filter from a list of hexadecimal-encoded hash160 values.
+9. bloom: Creates a Bloom filter from a list of hexadecimal-encoded hash160 values.
 
 # Example 1: Check for keys in a given range (append sequentially)
 
