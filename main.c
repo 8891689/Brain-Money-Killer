@@ -28,35 +28,41 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.*/
-
 #include <locale.h>
 #include <string.h>
 #include <stdalign.h>
+#include <gmp.h> 
 
-#include "lib/addr.c"
-#include "lib/bench.c"
-#include "lib/ecc.c" 
-#include "lib/utils.c"
-
+#include "lib/addr.h"
+#include "lib/bench.h"
+#include "lib/ecc.h" 
+#include "lib/utils.h"
 // https://github.com/8891689
-#include "lib/sha256_avx.h"
-#include "lib/ripemd160_avx.h"
+#include "bitrange.h" 
+#include "random.h"   
+#include "sha256_avx.h"
+#include "ripemd160_avx.h"
 
-#define VERSION ".8891689"
+#include <stdatomic.h>
+#include <byteswap.h> 
+#include <unistd.h>
+
+#define VERSION "8891689"
 #define GROUP_INV_SIZE 1024
 #define MAX_LINE_SIZE 128
 #define RAW_BATCH_SIZE 8 
 #define MAX_JOB_SIZE (1024 * 1024 * 2)
+#define RANDOM_JUMP_INTERVAL 1000000ULL
 
-enum Cmd { CMD_NIL, CMD_ADD, CMD_MUL };
+enum Mode { MODE_NIL, MODE_PUZZLE, MODE_BRAIN };
 
 typedef struct ctx_t {
-  enum Cmd cmd;
+  enum Mode mode;
   pthread_mutex_t lock;
   size_t threads_count;
   pthread_t *threads;
-  size_t k_checked;
-  size_t k_found;
+  _Atomic size_t k_checked; 
+  _Atomic size_t k_found;   
   size_t stime;
   bool check_addr33;
   bool check_addr65;
@@ -68,13 +74,18 @@ typedef struct ctx_t {
   size_t to_find_count;
   blf_t blf;
   
-  fe range_s;
-  fe range_e;
+  mpz_t gmp_range_s;
+  mpz_t gmp_range_e;
+  mpz_t gmp_curve_n;
+
   pe gpoints[GROUP_INV_SIZE];
   u64 job_size;
   
   queue_t queue;
   bool raw_text;
+
+  bool random_mode;
+  
 } ctx_t;
 
 
@@ -83,13 +94,11 @@ typedef struct cmd_mul_job_t {
   char lines[GROUP_INV_SIZE][MAX_LINE_SIZE];
 } cmd_mul_job_t;
 
-// Reimplementation and modification ：https://github.com/8891689
 void load_bloom(ctx_t *ctx, const char *filepath) {
   if (!filepath) { fprintf(stderr, "missing bloom filter file (-b)\n"); exit(1); }
   if (!blf_load(filepath, &ctx->blf)) { fprintf(stderr, "failed to load bloom filter: %s\n", filepath); exit(1); }
   ctx->use_bloom = true;
 }
-
 // Reimplementation and modification ：https://github.com/8891689
 void load_hash_list(ctx_t *ctx, const char *filepath) {
   if (!filepath) { fprintf(stderr, "missing hash list file (-f)\n"); exit(1); }
@@ -124,12 +133,25 @@ void load_hash_list(ctx_t *ctx, const char *filepath) {
 }
 
 void ctx_print_status(ctx_t *ctx) {
-  pthread_mutex_lock(&ctx->lock);
-  double dt = (tsnow() - ctx->stime) / 1000.0;
-  double it = (dt > 0) ? (ctx->k_checked / dt / 1000000) : 0;
-  printf("\r%.2fs ~ %.2fM it/s ~ %'zu / %'zu", dt, it, ctx->k_found, ctx->k_checked);
-  fflush(stdout);
-  pthread_mutex_unlock(&ctx->lock);
+    size_t current_checked = atomic_load(&ctx->k_checked);
+    size_t current_found = atomic_load(&ctx->k_found);
+    
+    double dt = (tsnow() - ctx->stime) / 1000.0;
+    
+    double it = (dt > 0) ? (current_checked / dt / 1000000) : 0;
+    
+#if defined(_WIN32) || defined(_WIN64)
+    printf("\r[+] Total %.2fs ~ %.2fM it/s ~ %llu / %llu",
+           dt, it,
+           (unsigned long long)current_found,
+           (unsigned long long)current_checked);
+#else
+    printf("\r[+] Total %.2fs ~ %.2fM it/s ~ %'zu / %'zu",
+           dt, it, current_found, current_checked);
+#endif
+
+    printf(" "); 
+    fflush(stdout);
 }
 
 void ctx_write_found(ctx_t *ctx, const char *label, const h160_t hash, const fe pk) {
@@ -146,13 +168,12 @@ void ctx_write_found(ctx_t *ctx, const char *label, const h160_t hash, const fe 
   pthread_mutex_unlock(&ctx->lock);
 }
 
-
 bool ctx_check_hash(ctx_t *ctx, const h160_t h) {
   if (ctx->use_bloom && ctx->use_confirm) {
     if (blf_has(&ctx->blf, h)) {
       return bsearch(h, ctx->to_find_hashes, ctx->to_find_count, sizeof(h160_t), compare_160) != NULL;
     }
-    return false;// https://github.com/8891689
+    return false;
   } else if (ctx->use_bloom) {
     return blf_has(&ctx->blf, h);
   } else if (ctx->use_confirm) {
@@ -160,129 +181,212 @@ bool ctx_check_hash(ctx_t *ctx, const h160_t h) {
   }
   return false;
 }
-
 // Reimplementation and modification ：https://github.com/8891689
-void *cmd_add_worker(void *arg) {
+void fe_from_mpz(fe r, const mpz_t m) {
+    unsigned char be_buffer[32] = {0};
+    size_t count;
+    mpz_export(be_buffer, &count, 1, 1, 1, 0, m);
+
+    if (count > 0 && count < 32) {
+        memmove(be_buffer + 32 - count, be_buffer, count);
+        memset(be_buffer, 0, 32 - count);
+    }
+    u64* r_ptr = (u64*)r;
+    for (int i = 0; i < 4; ++i) {
+        memcpy(&r_ptr[i], &be_buffer[32 - (i + 1) * 8], 8);
+        r_ptr[i] = bswap_64(r_ptr[i]);
+    }
+}
+// Reimplementation and modification ：https://github.com/8891689
+void *cmd_puzzle_worker(void *arg) {
     ctx_t *ctx = (ctx_t *)arg;
-    Sha256Avx8_C_Handle* sha_hasher = sha256_avx8_create();
+    Sha256Avx8_C_Handle *sha_hasher = sha256_avx8_create();
     alignas(64) RIPEMD160_MULTI_CTX ripemd_ctx;
     if (!sha_hasher) { return NULL; }
 
-    fe current_pk;
+    mpz_t task_start_pk_mpz;
+    fe current_pk_fe;
     u64 task_size;
+    mpz_init(task_start_pk_mpz);
+
+    if (ctx->random_mode) {
+        pthread_t tid = pthread_self();
+        rseed(time(NULL) ^ (uintptr_t)tid);
+    }
 
     while (true) {
-        pthread_mutex_lock(&ctx->lock);
-        if (fe_cmp(ctx->range_s, ctx->range_e) >= 0) {
-            pthread_mutex_unlock(&ctx->lock);
-            break;
-        }
-        fe_clone(current_pk, ctx->range_s);
-        fe task_end;
-        fe_clone(task_end, ctx->range_s);
-        fe_add64(task_end, ctx->job_size);
-        if (fe_cmp(task_end, ctx->range_e) > 0) fe_clone(task_end, ctx->range_e);
-        fe task_size_fe;
-        fe_modsub(task_size_fe, task_end, current_pk);
-        task_size = task_size_fe[0];
-        fe_clone(ctx->range_s, task_end);
-        pthread_mutex_unlock(&ctx->lock);
+        if (ctx->random_mode) {
+            mpz_t range_size, random_offset;
+            mpz_init(range_size);
+            mpz_init(random_offset);
 
+            mpz_sub(range_size, ctx->gmp_range_e, ctx->gmp_range_s);
+            if (mpz_cmp_ui(range_size, 0) <= 0) {
+                mpz_clear(range_size);
+                mpz_clear(random_offset);
+                break; 
+            }
+
+            unsigned char rand_bytes[32];
+            for(int i = 0; i < 8; ++i) {
+                uint32_t r = rndu32();
+                memcpy(rand_bytes + i*4, &r, 4);
+            }
+            mpz_import(random_offset, 32, 1, sizeof(unsigned char), 0, 0, rand_bytes);
+            mpz_mod(random_offset, random_offset, range_size);
+            mpz_add(task_start_pk_mpz, ctx->gmp_range_s, random_offset);
+            task_size = ctx->job_size;
+
+            mpz_clear(range_size);
+            mpz_clear(random_offset);
+        } else {
+            pthread_mutex_lock(&ctx->lock);
+            if (mpz_cmp(ctx->gmp_range_s, ctx->gmp_range_e) >= 0) {
+                pthread_mutex_unlock(&ctx->lock);
+                break;
+            }
+            mpz_set(task_start_pk_mpz, ctx->gmp_range_s);
+            mpz_add_ui(ctx->gmp_range_s, ctx->gmp_range_s, ctx->job_size);
+            task_size = ctx->job_size;
+            pthread_mutex_unlock(&ctx->lock);
+        }
+
+        mpz_t task_end_pk_mpz, remaining;
+        mpz_init(task_end_pk_mpz);
+        mpz_init(remaining);
+        mpz_add_ui(task_end_pk_mpz, task_start_pk_mpz, task_size);
+
+        if (mpz_cmp(task_end_pk_mpz, ctx->gmp_range_e) > 0) {
+             mpz_sub(remaining, ctx->gmp_range_e, task_start_pk_mpz);
+             if(mpz_fits_ulong_p(remaining)) {
+                 task_size = mpz_get_ui(remaining);
+             } else {
+                 task_size = 0;
+             }
+        }
+        mpz_clear(task_end_pk_mpz);
+        mpz_clear(remaining);
+        
         if (task_size == 0) continue;
 
-        u64 found_in_job = 0;
-        u64 iterations_done = 0;
+        fe_from_mpz(current_pk_fe, task_start_pk_mpz);
         
         pe start_point;
         pe *bp = malloc(GROUP_INV_SIZE * sizeof(pe));
-        ec_gtable_mul(&start_point, current_pk);
+        if (!bp) continue;
+        
+        ec_gtable_mul(&start_point, current_pk_fe);
         
         pe giant_step_G;
-        ec_gtable_mul(&giant_step_G, (fe){GROUP_INV_SIZE, 0, 0, 0});
+        fe fe_group_inv_size;
+        fe_set64(fe_group_inv_size, GROUP_INV_SIZE);
+        ec_gtable_mul(&giant_step_G, fe_group_inv_size);
 
+        u64 iterations_done = 0;
         while(iterations_done < task_size) {
             u64 current_round_size = MIN(GROUP_INV_SIZE, task_size - iterations_done);
-            
+            u64 found_this_round = 0;
+
             for (u64 i = 0; i < current_round_size; ++i) {
                 ec_jacobi_add(&bp[i], &start_point, &ctx->gpoints[i]);
             }
-
             ec_jacobi_grprdc(bp, current_round_size);
 
             for (u64 j = 0; j < current_round_size; j += RAW_BATCH_SIZE) {
-                int current_batch_size = (current_round_size - j < RAW_BATCH_SIZE) ? (current_round_size - j) : RAW_BATCH_SIZE;
-                
-                fe temp_pk;
+                int current_batch_size = MIN(RAW_BATCH_SIZE, current_round_size - j);
+                fe temp_pk_fe;
                 if (ctx->check_addr33) {
                     alignas(32) h160_t hash_results[RAW_BATCH_SIZE];
                     addrs33_avx2_batch(hash_results, &bp[j], sha_hasher, &ripemd_ctx);
                     for (int k = 0; k < current_batch_size; ++k) {
                         if (ctx_check_hash(ctx, hash_results[k])) {
-                            fe_clone(temp_pk, current_pk);
-                            fe_add64(temp_pk, iterations_done + j + k + 1);
-                            ctx_write_found(ctx, "addr33", hash_results[k], temp_pk);
-                            found_in_job++;
-                        }
-                    }
-                }
-                if (ctx->check_addr65) {
-                    alignas(32) h160_t hash_results[RAW_BATCH_SIZE];
-                    addrs65_avx2_batch(hash_results, &bp[j], sha_hasher, &ripemd_ctx);
-                    for (int k = 0; k < current_batch_size; ++k) {
-                        if (ctx_check_hash(ctx, hash_results[k])) {
-                           fe_clone(temp_pk, current_pk);
-                           fe_add64(temp_pk, iterations_done + j + k + 1);
-                           ctx_write_found(ctx, "addr65", hash_results[k], temp_pk);
-                           found_in_job++;
+                            fe_clone(temp_pk_fe, current_pk_fe);
+                            fe_add64(temp_pk_fe, iterations_done + j + k + 1); 
+                            ctx_write_found(ctx, "addr33", hash_results[k], temp_pk_fe);
+                            found_this_round++;
                         }
                     }
                 }
             }
-            
             ec_jacobi_add(&start_point, &start_point, &giant_step_G);
             iterations_done += current_round_size;
+
+            atomic_fetch_add(&ctx->k_checked, current_round_size);
+            if (found_this_round > 0) {
+                atomic_fetch_add(&ctx->k_found, found_this_round);
+            }
         }
         
         free(bp);
-
-        pthread_mutex_lock(&ctx->lock);
-        ctx->k_checked += task_size;
-        ctx->k_found += found_in_job;
-        pthread_mutex_unlock(&ctx->lock);
-        ctx_print_status(ctx);
     }
+
+    mpz_clear(task_start_pk_mpz);
     sha256_avx8_destroy(sha_hasher);
     return NULL;
 }
 
+
 // Reimplementation and modification ：https://github.com/8891689
-int cmd_add(ctx_t *ctx) {
-  ec_gtable_init();
-  pe_clone(&ctx->gpoints[0], &G1);
-  for (u64 i = 1; i < GROUP_INV_SIZE; ++i) {
-    ec_jacobi_add(&ctx->gpoints[i], &ctx->gpoints[i - 1], &G1);
-  }
-  ec_jacobi_grprdc(ctx->gpoints, GROUP_INV_SIZE);
+int cmd_puzzle(ctx_t *ctx) {
+    ec_gtable_init();
+    pe_clone(&ctx->gpoints[0], &G1);
+    ec_jacobi_dbl(&ctx->gpoints[1], &ctx->gpoints[0]);
+    for (u64 i = 2; i < GROUP_INV_SIZE; ++i) {
+        ec_jacobi_add(&ctx->gpoints[i], &ctx->gpoints[i - 1], &G1);
+    }
+    ec_jacobi_grprdc(ctx->gpoints, GROUP_INV_SIZE);
 
-  fe range_size;
-  fe_modsub(range_size, ctx->range_e, ctx->range_s);
-  ctx->job_size = fe_cmp64(range_size, MAX_JOB_SIZE) < 0 ? range_size[0] : MAX_JOB_SIZE;
+    if (ctx->random_mode) {
+        ctx->job_size = RANDOM_JUMP_INTERVAL;
+    } else {
+        ctx->job_size = MAX_JOB_SIZE;
+        mpz_t range_diff;
+        mpz_init(range_diff);
+        mpz_sub(range_diff, ctx->gmp_range_e, ctx->gmp_range_s);
+        if (mpz_cmp_ui(range_diff, ctx->job_size) < 0) {
+            if (mpz_fits_ulong_p(range_diff)) {
+                ctx->job_size = mpz_get_ui(range_diff) + 1;
+            }
+        }
+        mpz_clear(range_diff);
+    }
+    
+    for (size_t i = 0; i < ctx->threads_count; ++i) {
+        pthread_create(&ctx->threads[i], NULL, cmd_puzzle_worker, ctx);
+    }
 
-  for (size_t i = 0; i < ctx->threads_count; ++i) {
-    pthread_create(&ctx->threads[i], NULL, cmd_add_worker, ctx);
-  }
-  for (size_t i = 0; i < ctx->threads_count; ++i) {
-    pthread_join(ctx->threads[i], NULL);
-  }
-  ctx_print_status(ctx);
-  printf("\n");
-  return 0;
+    while (true) {
+        ctx_print_status(ctx); 
+
+        if (!ctx->random_mode) {
+            bool all_jobs_assigned = false;
+            pthread_mutex_lock(&ctx->lock);
+            if (mpz_cmp(ctx->gmp_range_s, ctx->gmp_range_e) >= 0) {
+                all_jobs_assigned = true;
+            }
+            pthread_mutex_unlock(&ctx->lock);
+
+            if (all_jobs_assigned) {
+                break;
+            }
+        }
+        
+        usleep(10000);
+    }
+
+    for (size_t i = 0; i < ctx->threads_count; ++i) {
+        pthread_join(ctx->threads[i], NULL);
+    }
+    
+    ctx_print_status(ctx);
+    printf("\n");
+    
+    return 0;
 }
-
 // Reimplementation and modification ：https://github.com/8891689
-void *cmd_mul_worker(void *arg) {
+void *cmd_brain_worker(void *arg) {
     ctx_t *ctx = (ctx_t *)arg;
-    Sha256Avx8_C_Handle* sha_hasher = sha256_avx8_create();
+    Sha256Avx8_C_Handle *sha_hasher = sha256_avx8_create();
     alignas(64) RIPEMD160_MULTI_CTX ripemd_ctx;
     if (!sha_hasher) { return NULL; }
     
@@ -292,7 +396,8 @@ void *cmd_mul_worker(void *arg) {
         job = queue_get(&ctx->queue);
         if (job == NULL) break;
         size_t found_in_job = 0;
-        if (ctx->raw_text) {
+        
+        if (ctx->raw_text) { 
              for (size_t i = 0; i < job->count; i += RAW_BATCH_SIZE) {
                 int current_batch_size = (job->count - i < RAW_BATCH_SIZE) ? (job->count - i) : RAW_BATCH_SIZE;
                 alignas(64) uint8_t blocks[RAW_BATCH_SIZE][64];
@@ -320,6 +425,7 @@ void *cmd_mul_worker(void *arg) {
                      ec_gtable_mul(&cp_batch[j], pk_batch[j]);
                 }
                 ec_jacobi_grprdc(cp_batch, current_batch_size);
+
                 if (ctx->check_addr33) {
                     alignas(32) h160_t hash_results[RAW_BATCH_SIZE];
                     addrs33_avx2_batch(hash_results, cp_batch, sha_hasher, &ripemd_ctx);
@@ -331,6 +437,7 @@ void *cmd_mul_worker(void *arg) {
                         }
                     }
                 }
+                
                 if (ctx->check_addr65) {
                     alignas(32) h160_t hash_results[RAW_BATCH_SIZE];
                     addrs65_avx2_batch(hash_results, cp_batch, sha_hasher, &ripemd_ctx);
@@ -343,7 +450,7 @@ void *cmd_mul_worker(void *arg) {
                     }
                 }
             }
-        } else {
+        } else { 
             for (size_t i = 0; i < job->count; i += RAW_BATCH_SIZE) {
                 int current_batch_size = (job->count - i < RAW_BATCH_SIZE) ? (job->count - i) : RAW_BATCH_SIZE;
                 alignas(32) pe cp_batch[RAW_BATCH_SIZE];
@@ -351,6 +458,7 @@ void *cmd_mul_worker(void *arg) {
                 for (int j = 0; j < current_batch_size; ++j) fe_from_hex(pk_batch[j], job->lines[i + j]);
                 for (int j = 0; j < current_batch_size; ++j) ec_gtable_mul(&cp_batch[j], pk_batch[j]);
                 ec_jacobi_grprdc(cp_batch, current_batch_size);
+
                  if (ctx->check_addr33) {
                     alignas(32) h160_t hash_results[RAW_BATCH_SIZE];
                     addrs33_avx2_batch(hash_results, cp_batch, sha_hasher, &ripemd_ctx);
@@ -361,6 +469,7 @@ void *cmd_mul_worker(void *arg) {
                         }
                     }
                 }
+                
                 if (ctx->check_addr65) {
                     alignas(32) h160_t hash_results[RAW_BATCH_SIZE];
                     addrs65_avx2_batch(hash_results, cp_batch, sha_hasher, &ripemd_ctx);
@@ -373,24 +482,23 @@ void *cmd_mul_worker(void *arg) {
                 }
             }
         }
-        pthread_mutex_lock(&ctx->lock);
-        ctx->k_checked += job->count;
-        ctx->k_found += found_in_job;
-        pthread_mutex_unlock(&ctx->lock);
-        if(job->count > 0) {
-            ctx_print_status(ctx);
+        
+        atomic_fetch_add(&ctx->k_checked, job->count);
+        if (found_in_job > 0) {
+            atomic_fetch_add(&ctx->k_found, found_in_job);
         }
+        
+        if(job->count > 0) ctx_print_status(ctx);
     }
     if (job != NULL) free(job);
     sha256_avx8_destroy(sha_hasher);
     return NULL;
 }
 
-
-int cmd_mul(ctx_t *ctx) {
+int cmd_brain(ctx_t *ctx) {
   ec_gtable_init();
   for (size_t i = 0; i < ctx->threads_count; ++i) {
-    pthread_create(&ctx->threads[i], NULL, cmd_mul_worker, ctx);
+    pthread_create(&ctx->threads[i], NULL, cmd_brain_worker, ctx);
   }
   cmd_mul_job_t *job = calloc(1, sizeof(cmd_mul_job_t));
   char line[MAX_LINE_SIZE];
@@ -410,89 +518,76 @@ int cmd_mul(ctx_t *ctx) {
   
   queue_done(&ctx->queue);
   for (size_t i = 0; i < ctx->threads_count; ++i) {
-    pthread_join(ctx->threads[i], NULL);
+    pthread_join(ctx->threads[i], NULL); 
   }
   ctx_print_status(ctx);
   printf("\n");
   return 0;
 }
 
-
-void arg_search_range(args_t *args, fe range_s, fe range_e) {
-  char *raw = arg_str(args, "-r");
-  if (!raw) {
-    fprintf(stderr, "Error: 'puzzle' command requires a range specified with -r (e.g., -r 1:FFFF)\n");
-    exit(1);
-  }
-  // https://github.com/8891689
-  char *sep = strchr(raw, ':');
-  if (!sep) {
-    fprintf(stderr, "invalid search range, use format: -r start:end\n");
-    exit(1);
-  }
-  *sep = 0;
-  const char* start_str = raw;
-  const char* end_str = sep + 1;
-  if (strlen(start_str) == 0 || strlen(end_str) == 0) {
-      fprintf(stderr, "invalid search range: start or end value is missing.\n");
-      exit(1);
-  }
-  fe_from_hex(range_s, start_str);
-  fe_from_hex(range_e, end_str);
-  if (fe_iszero(range_s)) {
-      fe_set64(range_s, 1);
-  }
-  if (fe_cmp(range_e, P) > 0) {
-    fe_clone(range_e, P);
-  }
-  if (fe_cmp(range_s, range_e) >= 0) {
-    fprintf(stderr, "invalid search range, start must be less than end.\n");
-    exit(1);
-  }
+void arg_parse_range(ctx_t *ctx, args_t *args) {
+    char *raw = arg_str(args, "-r");
+    if (!raw) {
+        fprintf(stderr, "Error: 'puzzle' mode requires a range specified with -r (e.g., -r 1:FFFF)\n");
+        exit(1);
+    }
+    if (set_range(raw, ctx->gmp_range_s, ctx->gmp_range_e) != 0) exit(1);
+    if (mpz_cmp(ctx->gmp_range_s, ctx->gmp_range_e) >= 0) {
+        fprintf(stderr, "invalid search range, start must be less than end.\n");
+        exit(1);
+    }
 }
 
 void usage(const char *name) {
-    printf("Usage: %s <cmd> [-t <threads>] [-b <bloom_file>] [-f <hash_list>] [-a <addr_type>] [-r <range>] [-sha]\n", name);
-    printf("v%s\n", VERSION);
-    printf("\nCompute commands:\n");
-    printf("  puzzle          - Performs efficient search within a given range, suitable for puzzle games.\n");
-    printf("  brain           - Search from standard input. Defaults to a hexadecimal private key; brainwallet attacks require the -sha flag.\n");
-    printf("\nCompute options:\n");
-    printf("  -b <file>       - bloom filter file\n");
-    printf("  -f <file>       - hash list file for second confirmation\n");
-    printf("  -o <file>       - output file (default: stdout)\n");
-    printf("  -t <threads>    - number of threads to run (default: 1)\n");
-    printf("  -a <addr_type>  - address type to search: c addr33(compressed), u addr65(uncompressed), (default: c)\n");
-    printf("  -r <range>      - (for puzzle mode) search range in hex format (example: 8000:ffff)\n");
-    printf("  -q              - quiet mode (no stdout; must use -o)\n");
-    printf("  -sha            - (For brainwallet mode) Treats the standard input line as a raw text password and encrypts the computed private key using SHA256.\n");
+    printf("Usage: %s -m <mode> [options]\n", name);
+    printf("v%s, developed by 8891689\n", VERSION);
+    printf("\nModes (-m):\n");
+    printf("  puzzle          Puzzle solving mode. Searches for keys in a given range.\n");
+    printf("  brain           Brainwallet mode. Reads keys or passphrases from standard input.\n");
+    printf("  bloom           Generate a bloom filter from stdin.\n");
+    printf("\nCommon Options:\n");
+    printf("  -b <file>       Bloom filter file for quick checks.\n");
+    printf("  -f <file>       Hash list file for final confirmation.\n");
+    printf("  -o <file>       Output file for found keys (default: stdout).\n");
+    printf("  -t <threads>    Number of threads to use (default: 1).\n");
+    printf("  -a <addr_type>  Address type: 'c' (compressed), 'u' (uncompressed), 'cu' (both). Default: c.\n");
+    printf("  -q              Quiet mode (no status updates to stdout).\n");
+    printf("\nPuzzle Mode Options:\n");
+    printf("  -r <start:end>  Search range in hexadecimal format (required for puzzle mode).\n");
+    printf("  -R              Enable random mode. Jumps to a new random key every ~100 million checks.\n");
+    printf("\nBrain Mode Options:\n");
+    printf("  -sha            Treat stdin lines as passphrases, hash them with SHA256 to get private keys.\n");
 }
 
 void init(ctx_t *ctx, args_t *args) {
-    if (args->argc > 1) { if (strcmp(args->argv[1], "bloom") == 0) { blf_gen(args); exit(0); } }
-    
-    ctx->cmd = CMD_NIL;
-    if (args->argc > 1) {
-        if (strcmp(args->argv[1], "puzzle") == 0) ctx->cmd = CMD_ADD;
-        if (strcmp(args->argv[1], "brain") == 0) ctx->cmd = CMD_MUL;
+    if (args->argc > 1 && strcmp(args->argv[1], "bloom") == 0) { 
+        blf_gen(args); exit(0); 
+    }
+    char *mode_str_check = arg_str(args, "-m");
+    if (mode_str_check && strcmp(mode_str_check, "bloom") == 0) {
+        blf_gen(args); exit(0);
+    }
+
+    ctx->mode = MODE_NIL;
+    char* mode_str = arg_str(args, "-m");
+    if (mode_str) {
+        if (strcmp(mode_str, "puzzle") == 0) ctx->mode = MODE_PUZZLE;
+        else if (strcmp(mode_str, "brain") == 0) ctx->mode = MODE_BRAIN;
     }
     
-    if (ctx->cmd == CMD_NIL) {
-        if (args_bool(args, "-v")) printf("Brainmk v%s\n", VERSION);
-        else usage(args->argv[0]);
-        exit(0);
+    if (ctx->mode == MODE_NIL) {
+        usage(args->argv[0]); exit(0);
     }
     
-    ctx->use_bloom = false; ctx->use_confirm = false;
     char *bloom_path = arg_str(args, "-b");
-    if (bloom_path) { load_bloom(ctx, bloom_path); }
+    if (bloom_path) load_bloom(ctx, bloom_path);
     char *hash_path = arg_str(args, "-f");
-    if (hash_path) { load_hash_list(ctx, hash_path); }
+    if (hash_path) load_hash_list(ctx, hash_path);
     
     ctx->quiet = args_bool(args, "-q");
     char *outfile = arg_str(args, "-o");
     if (outfile) ctx->outfile = fopen(outfile, "a");
-    if (outfile == NULL && ctx->quiet) { fprintf(stderr, "quiet mode chosen without output file\n"); exit(1); }
+    if (outfile == NULL && ctx->quiet) { fprintf(stderr, "Quiet mode requires an output file (-o).\n"); exit(1); }
     
     char *addr = arg_str(args, "-a");
     if (addr) {
@@ -506,50 +601,75 @@ void init(ctx_t *ctx, args_t *args) {
     pthread_mutex_init(&ctx->lock, NULL);
     ctx->threads_count = MIN(MAX(args_int(args, "-t", 1), 1), 128);
     ctx->threads = malloc(ctx->threads_count * sizeof(pthread_t));
-    ctx->k_checked = 0; ctx->k_found = 0;
+    atomic_init(&ctx->k_checked, 0); 
+    atomic_init(&ctx->k_found, 0);  
     ctx->stime = tsnow();
-    
-    if (ctx->cmd == CMD_ADD) {
-        arg_search_range(args, ctx->range_s, ctx->range_e);
+    // Reimplementation and modification ：https://github.com/8891689
+    mpz_init(ctx->gmp_range_s);
+    mpz_init(ctx->gmp_range_e);
+    mpz_init(ctx->gmp_curve_n);
+    mpz_set_str(ctx->gmp_curve_n, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBD25E8CD0364141", 16);
+
+    if (ctx->mode == MODE_PUZZLE) {
+        ctx->random_mode = args_bool(args, "-R");
+        arg_parse_range(ctx, args);
     }
-    if (ctx->cmd == CMD_MUL) {
+    if (ctx->mode == MODE_BRAIN) {
         queue_init(&ctx->queue, ctx->threads_count * 3);
         ctx->raw_text = args_bool(args, "-sha");
     }
 
-    printf("command: %s | threads: %zu | addr33: %d | addr65: %d\n", 
-           ctx->cmd == CMD_ADD ? "puzzle" : "brain", ctx->threads_count, ctx->check_addr33, ctx->check_addr65);
-
-    if (ctx->cmd == CMD_MUL && ctx->raw_text) { printf("Mode: brainwallet password (enter < 56 characters)\n"); }
-    
-    if (ctx->use_bloom && ctx->use_confirm) { printf("filter: bloom + list (%'zu)\n", ctx->to_find_count); }
-    else if (ctx->use_bloom) { printf("filter: bloom\n"); }
-    else if (ctx->use_confirm) { printf("filter: list (%'zu)\n", ctx->to_find_count); }
-    else { printf("filter: none\n"); }
-    
-    if (ctx->cmd == CMD_ADD) {
-      fe_print("range_s", ctx->range_s);
-      fe_print("range_e", ctx->range_e);
+    printf("[+] Version %s , developed by 8891689\n", VERSION);
+    printf("[+] Mode %s\n", ctx->mode == MODE_PUZZLE ? "puzzle" : "brain");
+    if (ctx->check_addr33 && ctx->check_addr65) {
+        printf("[+] Search compress and uncompress\n");
+    } else if (ctx->check_addr33) {
+        printf("[+] Search compress only\n");
+    } else if (ctx->check_addr65) {
+        printf("[+] Search uncompress only\n");
     }
-    printf("----------------------------------------\n");
+    printf("[+] Thread : %zu\n", ctx->threads_count);
+
+    if (ctx->mode == MODE_PUZZLE && ctx->random_mode) {
+        printf("[+] Random mode\n");
+        printf("[+] N = 0x%llx\n", RANDOM_JUMP_INTERVAL);
+    }
+    if (ctx->mode == MODE_PUZZLE) {
+        printf("[+] Range \n");
+        gmp_printf("[+] -- from : 0x%Zx\n", ctx->gmp_range_s);
+        gmp_printf("[+] -- to   : 0x%Zx\n", ctx->gmp_range_e);
+    }
+    if (ctx->use_bloom || ctx->use_confirm) {
+        size_t total_elements = ctx->use_confirm ? ctx->to_find_count : 1;
+        double blf_mem = ctx->use_bloom ? (double)(ctx->blf.size * sizeof(u64)) / (1024*1024) : 0.0;
+        printf("[+] Allocating memory for %zu elements: %.2f MB\n", total_elements, blf_mem);
+        printf("[+] Bloom filter for %zu elements.\n", total_elements);
+        double list_mem = ctx->use_confirm ? (double)(ctx->to_find_count * sizeof(h160_t)) / (1024*1024) : 0.0;
+        printf("[+] Loading data to the bloomfilter total: %.2f MB\n", list_mem);
+        if(ctx->use_confirm) {
+            printf("[+] Sorting data ... done! %zu values were loaded and sorted\n", ctx->to_find_count);
+        }
+    }
 }
 
 int main(int argc, const char **argv) {
-  // https://stackoverflow.com/a/11695246
   setlocale(LC_NUMERIC, "");
   args_t args = {argc, argv};
   ctx_t ctx = {0};
   
   init(&ctx, &args);
   
-  if (ctx.cmd == CMD_ADD) {
-      cmd_add(&ctx);
+  if (ctx.mode == MODE_PUZZLE) {
+      cmd_puzzle(&ctx);
   }
   
-  if (ctx.cmd == CMD_MUL) {
-      cmd_mul(&ctx);
+  if (ctx.mode == MODE_BRAIN) {
+      cmd_brain(&ctx);
   }
   
   if (ctx.outfile != NULL) fclose(ctx.outfile);
+  mpz_clear(ctx.gmp_range_s);
+  mpz_clear(ctx.gmp_range_e); 
+  mpz_clear(ctx.gmp_curve_n); 
   return 0;
 }
