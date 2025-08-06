@@ -230,7 +230,7 @@ DOGE: DTszb9cPALbG9ESNJMFJt4ECqWGRCgucky
 TRX: TAHUmjyzg7B3Nndv264zWYUhQ9HUmX4Xu4
 
 ```
-#⚠️ Reminder:
+# ⚠️ Reminder:
 
 This tool is for learning and research purposes only. Do not use it for illegal activities!
 
