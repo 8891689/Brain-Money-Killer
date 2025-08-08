@@ -166,8 +166,7 @@ addr65: a9dbd7c2b5bf44e18c5f7fa994ad29eae2da973b <- fa3b4635d18025c0cfec4902cd75
 5. The bloomer will automatically generate an optimal bloom file.
 6. The Bloom filter uses p = 0.000001 (1 in 1,000,000 false positives). You can adjust this option by using n. 
 7. See the Bloom filter calculator. A list of all addresses can be found here.
-8.wc -l linux advanced command can query the total number of lines, for
-
+8. wc -l linux advanced command can query the total number of lines, for
 example: wc -l target.txt, find the number of lines in the file target.txt, and output 14 target.txt
 
 ```
